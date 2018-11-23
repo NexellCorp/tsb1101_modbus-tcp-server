@@ -46,7 +46,7 @@ int main(int argc, char *argv[])
 //    struct timeval response_timeout;
     int use_backend;
 	char serverip[] = "127.0.0.1";
-	char serverportstr[] = "1502";
+	char serverportstr[] = "502";
 
 
     if (argc > 1) {
@@ -74,9 +74,9 @@ int main(int argc, char *argv[])
 		ctx = modbus_new_tcp(serverip, sport);
 	}
 	else if (use_backend == TCP) {
-        ctx = modbus_new_tcp("127.0.0.1", 1502);
+        ctx = modbus_new_tcp("127.0.0.1", 502);
     } else if (use_backend == TCP_PI) {
-        ctx = modbus_new_tcp_pi("::1", "1502");
+        ctx = modbus_new_tcp_pi("::1", "502");
     } else {
         ctx = modbus_new_rtu("/dev/ttyUSB1", 115200, 'N', 8, 1);
     }
@@ -101,8 +101,8 @@ int main(int argc, char *argv[])
     }
 
 #if 1
-    tab_rp_registers = (uint16_t *) malloc(8 * sizeof(uint16_t));
-    memset(tab_rp_registers, 0, 8 * sizeof(uint16_t));
+    tab_rp_registers = (uint16_t *) malloc(10 * sizeof(uint16_t));
+    memset(tab_rp_registers, 0, 10 * sizeof(uint16_t));
 
 
 	while(1)
@@ -110,7 +110,7 @@ int main(int argc, char *argv[])
 	{
 		/** INPUT REGISTERS **/
 		rc = modbus_read_input_registers(ctx, 0,
-										 7,
+										 9,
 										 tab_rp_registers);
 		if (rc != 7) {
 			printf("FAILED (nb points %d)\n", rc);
@@ -120,10 +120,12 @@ int main(int argc, char *argv[])
 		printf("bd1 id      : %d\n", tab_rp_registers[0]);
 		printf("bd1 asic id : %d\n", tab_rp_registers[1]);
 		printf("bd1 temper  : %d\n", tab_rp_registers[2]);
-		printf("bd2 id      : %d\n", tab_rp_registers[3]);
-		printf("bd2 asic id : %d\n", tab_rp_registers[4]);
-		printf("bd2 temper  : %d\n", tab_rp_registers[5]);
-		printf("cpu temper  : %d\n", tab_rp_registers[6]);
+		printf("bd1 error   : %d\n", tab_rp_registers[3]);
+		printf("bd2 id      : %d\n", tab_rp_registers[4]);
+		printf("bd2 asic id : %d\n", tab_rp_registers[5]);
+		printf("bd2 temper  : %d\n", tab_rp_registers[6]);
+		printf("bd2 error   : %d\n", tab_rp_registers[7]);
+		printf("cpu temper  : %d\n", tab_rp_registers[8]);
 		printf("\n");
 
 		sleep(2);

@@ -23,8 +23,11 @@
 #include <string.h>
 #include <stdlib.h>
 #include <errno.h>
-#include <modbus.h>
 #include <pthread.h>
+
+#include "modbus.h"
+#include "modbus-private.h"
+#include "modbus-tcp-private.h"
 
 #include "unit-test.h"
 
@@ -36,147 +39,67 @@ enum {
     RTU
 };
 
-int main(int argc, char*argv[])
+#define TEMPERATURE_NOT_DETECTED_YET	0
+#define DEFAULT_TEMPERATURE TEMPERATURE_NOT_DETECTED_YET
+
+modbus_t *modbus_clone_tcp(modbus_t *ctx)
+{	
+	modbus_t *new_ctx = (modbus_t *)malloc(sizeof(modbus_t));
+	memcpy(new_ctx, ctx, sizeof(modbus_t));
+	new_ctx->backend_data = (modbus_tcp_t *) malloc(sizeof(modbus_tcp_t));
+	memcpy(new_ctx->backend_data, ctx->backend_data, sizeof(modbus_tcp_t));
+
+	//modbus_tcp_t *mb_tcp = (modbus_tcp_t*)ctx->backend_data;
+	printf("Socket copied %d, should be %d\n", new_ctx->s, ctx->s);
+
+	return new_ctx;
+}
+
+typedef struct {
+	modbus_t *ctxt;
+	modbus_mapping_t *mm;
+	int id;
+	int header_length;
+} SA;
+
+void *serveClient(void *threadarg)
 {
-    int socket;
-    modbus_t *ctx;
-    modbus_mapping_t *mb_mapping;
-    int rc;
-    int i;
-    int use_backend;
-    uint8_t *query;
-    int header_length;
+	int i, rc;
+	SA *a;
+	a = (SA *) threadarg;
+	modbus_t *ctx = a->ctxt;
+	modbus_mapping_t *mb_mapping = a->mm;	
+	int id = a->id;
+	int header_length = a->header_length;
+
+	uint8_t query[MODBUS_TCP_MAX_ADU_LENGTH];
 	int ctrl_bd_id = 1;
-	int hotest_asic_id1 = 33;
-	int hotest_temper1 = 92;
-	int hotest_asic_id2 = 21;
-	int hotest_temper2 = 89;
+	int hotest_asic_id1 = 31;
+	int hotest_temper1 = 97;
+	int error_id1 = 0;
+	int hotest_asic_id2 = 17;
+	int hotest_temper2 = 63;
+	int error_id2 = 0;
 #define BD_ENABLED 1
 	int stat_bd1 = BD_ENABLED;
 	int stat_bd2 = BD_ENABLED;
-
-	printf("modbus-server (buidtime : %s)\n", BUILDTIME);
-    if (argc > 1) {
-        if (strcmp(argv[1], "tcp") == 0) {
-            use_backend = TCP;
-        } else if (strcmp(argv[1], "tcppi") == 0) {
-            use_backend = TCP_PI;
-        } else if (strcmp(argv[1], "rtu") == 0) {
-            use_backend = RTU;
-        } else {
-            printf("Usage:\n  %s [tcp|tcppi|rtu] - Modbus server for unit testing\n\n", argv[0]);
-            return -1;
-        }
-    } else {
-        /* By default */
-        use_backend = TCP;
-    }
-
-    if (use_backend == TCP) {
-        ctx = modbus_new_tcp("127.0.0.1", 502);
-        query = malloc(MODBUS_TCP_MAX_ADU_LENGTH);
-    } else if (use_backend == TCP_PI) {
-        ctx = modbus_new_tcp_pi("::0", "1502");
-        query = malloc(MODBUS_TCP_MAX_ADU_LENGTH);
-    } else {
-        ctx = modbus_new_rtu("/dev/ttyUSB0", 115200, 'N', 8, 1);
-        modbus_set_slave(ctx, SERVER_ID);
-        query = malloc(MODBUS_RTU_MAX_ADU_LENGTH);
-    }
-    header_length = modbus_get_header_length(ctx);
-
-    modbus_set_debug(ctx, TRUE);
-
-	// 1: first board number
-	// 2: number of hottest asic in first board
-	// 3: temperature of hottest asic in first board
-	// 4: second board number
-	// 5: number of hottest asic in second board
-	// 6: temperature of hottest asic in second board
-	// 7: temperature of s5p6818
-    mb_mapping = modbus_mapping_new(
-        0, //UT_BITS_ADDRESS + UT_BITS_NB,
-        0, //UT_INPUT_BITS_ADDRESS + UT_INPUT_BITS_NB,
-        0, //UT_REGISTERS_ADDRESS + UT_REGISTERS_NB,
-        7); //UT_INPUT_REGISTERS_ADDRESS + UT_INPUT_REGISTERS_NB);
-    if (mb_mapping == NULL) {
-        fprintf(stderr, "Failed to allocate the mapping: %s\n",
-                modbus_strerror(errno));
-        modbus_free(ctx);
-        return -1;
-    }
-
-    /* Examples from PI_MODBUS_300.pdf.
-       Only the read-only input values are assigned. */
-
-    /** INPUT STATUS **/
-//    modbus_set_bits_from_bytes(mb_mapping->tab_input_bits,
-//                               UT_INPUT_BITS_ADDRESS, UT_INPUT_BITS_NB,
-//                               UT_INPUT_BITS_TAB);
-
-    /** INPUT REGISTERS **/
-#if 0
-    for (i=0; i < UT_INPUT_REGISTERS_NB; i++) {
-        mb_mapping->tab_input_registers[UT_INPUT_REGISTERS_ADDRESS+i] =
-            UT_INPUT_REGISTERS_TAB[i];;
-    }
-#else
-#define TEMPERATURE_NOT_DETECTED_YET	0
-#define DEFAULT_TEMPERATURE TEMPERATURE_NOT_DETECTED_YET
-    for (i=0; i < 8; i++) {
-        mb_mapping->tab_input_registers[i] = i; //DEFAULT_TEMPERATURE;
-    }
-#endif
-
-	for(;;) {
-    if (use_backend == TCP) {
-        socket = modbus_tcp_listen(ctx, 1);
-        modbus_tcp_accept(ctx, &socket);
-    } else if (use_backend == TCP_PI) {
-        socket = modbus_tcp_pi_listen(ctx, 1);
-        modbus_tcp_pi_accept(ctx, &socket);
-    } else {
-        rc = modbus_connect(ctx);
-        if (rc == -1) {
-            fprintf(stderr, "Unable to connect %s\n", modbus_strerror(errno));
-            modbus_free(ctx);
-            return -1;
-        }
-    }
 
 	/* TODO: get ctrl_bd_id */
 	/* TODO: get stat_bd1, stat_bd2 */
 
 	printf("header_length = %d\n", header_length);
-    for (;;) {
-        rc = modbus_receive(ctx, query);
-        if (rc == -1) {
-            /* Connection closed by the client or error */
-            break;
-        }
+	for (;;) {
+		rc = modbus_receive(ctx, query);
+		if (rc == -1) {
+			/* Connection closed by the client or error */
+			break;
+		}
 
-#if 0
-        /* Read holding registers */
-        if (query[header_length] == 0x03) {
-            if (MODBUS_GET_INT16_FROM_INT8(query, header_length + 3)
-                == UT_REGISTERS_NB_SPECIAL) {
-                printf("Set an incorrect number of values\n");
-                MODBUS_SET_INT16_TO_INT8(query, header_length + 3,
-                                         UT_REGISTERS_NB_SPECIAL - 1);
-            } else if (MODBUS_GET_INT16_FROM_INT8(query, header_length + 1)
-                == UT_REGISTERS_ADDRESS_SPECIAL) {
-                printf("Reply to this special register address by an exception\n");
-                modbus_reply_exception(ctx, query,
-                                       MODBUS_EXCEPTION_SLAVE_OR_SERVER_BUSY);
-                continue;
-            }
-        }
-#else
-        if (query[header_length] != 0x04) {
-                modbus_reply_exception(ctx, query,
-                                       MODBUS_EXCEPTION_NOT_DEFINED);
+		if (query[header_length] != 0x04) {
+				modbus_reply_exception(ctx, query,
+									   MODBUS_EXCEPTION_NOT_DEFINED);
 				printf("query[%d] = 0x%02x\n", header_length, query[header_length]);
-                continue;
+				continue;
 		}
 
 		int starting_addr = 0;
@@ -192,10 +115,12 @@ int main(int argc, char*argv[])
 #define	MODBUS_ADDR_ID_OF_BD1	1
 #define MODBUS_ADDR_ID_OF_HOTEST_ASIC_IN_BD1	2
 #define MODBUS_ADDR_TEMPER_OF_HOTEST_ASIC_IN_BD1	3
-#define	MODBUS_ADDR_ID_OF_BD2	4
-#define MODBUS_ADDR_ID_OF_HOTEST_ASIC_IN_BD2	5
-#define MODBUS_ADDR_TEMPER_OF_HOTEST_ASIC_IN_BD2	6
-#define MODBUS_ADDR_TEMPER_OF_CPU	7
+#define MODBUS_ADDR_ERROR_OF_BD1	4
+#define	MODBUS_ADDR_ID_OF_BD2	5
+#define MODBUS_ADDR_ID_OF_HOTEST_ASIC_IN_BD2	6
+#define MODBUS_ADDR_TEMPER_OF_HOTEST_ASIC_IN_BD2	7
+#define MODBUS_ADDR_ERROR_OF_BD2	8
+#define MODBUS_ADDR_TEMPER_OF_CPU	9
 
 		if( ( starting_addr         <= MODBUS_ADDR_ID_OF_BD1) 
 		  &&((starting_addr+number) >  MODBUS_ADDR_TEMPER_OF_HOTEST_ASIC_IN_BD1)
@@ -210,6 +135,8 @@ int main(int argc, char*argv[])
 				mb_mapping->tab_input_registers[idx++] = hotest_asic_id1;
 				// hotest temper
 				mb_mapping->tab_input_registers[idx++] = hotest_temper1;
+				// error state
+				mb_mapping->tab_input_registers[idx++] = error_id1;
 				printf("bd1 info : O ,");
 			}
 			else {
@@ -217,6 +144,8 @@ int main(int argc, char*argv[])
 				mb_mapping->tab_input_registers[idx++] = hotest_asic_id1;
 				// hotest temper
 				mb_mapping->tab_input_registers[idx++] = hotest_temper1;
+				// error state
+				mb_mapping->tab_input_registers[idx++] = error_id1;
 				printf("bd1 info : X ,");
 			}
 		}
@@ -233,6 +162,8 @@ int main(int argc, char*argv[])
 				mb_mapping->tab_input_registers[idx++] = hotest_asic_id2;
 				// hotest temper
 				mb_mapping->tab_input_registers[idx++] = hotest_temper2;
+				// error state
+				mb_mapping->tab_input_registers[idx++] = error_id2;
 				printf("bd2 info : O ,");
 			}
 			else {
@@ -240,6 +171,8 @@ int main(int argc, char*argv[])
 				mb_mapping->tab_input_registers[idx++] = hotest_asic_id2;
 				// hotest temper
 				mb_mapping->tab_input_registers[idx++] = hotest_temper2;
+				// error state
+				mb_mapping->tab_input_registers[idx++] = error_id2;
 				printf("bd2 info : X ,");
 			}
 		}
@@ -270,23 +203,100 @@ int main(int argc, char*argv[])
 				printf("\n");
 			}
 		}
-#endif
 
-        rc = modbus_reply(ctx, query, rc, mb_mapping);
-        if (rc == -1) {
-            break;
-        }
-    }
-
-    printf("Quit the loop: %s\n", modbus_strerror(errno));
-
-    if (use_backend == TCP) {
-        close(socket);
-    }
+		rc = modbus_reply(ctx, query, rc, mb_mapping);
+		if (rc == -1) {
+			break;
+		}
 	}
+
+	//clean-up
+	free(ctx);
+	free(a);
+}
+
+int main(int argc, char*argv[])
+{
+    int rc;
+    int i;
+	int id = 0;
+	int header_length;
+	modbus_t *ctx = NULL;
+	modbus_t *new_ctx;
+	modbus_mapping_t *mb_mapping;
+	int server_socket = -1;
+	pthread_t tId;
+
+	pthread_attr_t attr;
+
+	printf("modbus-server (buidtime : %s)\n", BUILDTIME);
+
+	/* Initialize and set thread detached attribute */
+	pthread_attr_init(&attr);
+	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+
+	ctx = modbus_new_tcp("127.0.0.1", 502);
+    header_length = modbus_get_header_length(ctx);
+
+    modbus_set_debug(ctx, TRUE);
+
+	// 1: first board number
+	// 2: number of hottest asic in first board
+	// 3: temperature of hottest asic in first board
+	// 4: error state of first board
+	// 5: second board number
+	// 6: number of hottest asic in second board
+	// 7: temperature of hottest asic in second board
+	// 8: error state of first board
+	// 9: temperature of s5p6818
+    mb_mapping = modbus_mapping_new(
+        0, //UT_BITS_ADDRESS + UT_BITS_NB,
+        0, //UT_INPUT_BITS_ADDRESS + UT_INPUT_BITS_NB,
+        0, //UT_REGISTERS_ADDRESS + UT_REGISTERS_NB,
+        9); //UT_INPUT_REGISTERS_ADDRESS + UT_INPUT_REGISTERS_NB);
+    if (mb_mapping == NULL) {
+        fprintf(stderr, "Failed to allocate the mapping: %s\n",
+                modbus_strerror(errno));
+        modbus_free(ctx);
+        return -1;
+    }
+
+    /** INPUT REGISTERS **/
+    for (i=0; i < 9; i++) {
+        mb_mapping->tab_input_registers[i] = DEFAULT_TEMPERATURE;
+    }
+
+	server_socket = modbus_tcp_listen(ctx, 5);
+	if (server_socket == -1) {
+		fprintf(stderr, "Unable to listen TCP connection\n");
+		modbus_free(ctx);
+		return -1;
+	}
+
+	for(;;) {
+		id++;
+
+		modbus_tcp_accept(ctx, &server_socket);
+		new_ctx = modbus_clone_tcp(ctx);
+
+		SA *sa = (SA*)malloc(sizeof(SA));
+		sa->ctxt = new_ctx;
+		sa->mm = mb_mapping;
+		sa->id = id;
+		sa->header_length = header_length;
+
+		rc = pthread_create(&tId, &attr, serveClient, (void *)sa); 
+		if (rc) {
+			printf("ERROR; return code from pthread_create() is %d\n", rc);
+			break;
+		}
+	}
+	if(server_socket != -1)
+		close(server_socket);
     modbus_mapping_free(mb_mapping);
-    free(query);
+    modbus_close(ctx);
     modbus_free(ctx);
 
     return 0;
 }
+
