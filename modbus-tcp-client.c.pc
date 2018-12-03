@@ -112,7 +112,7 @@ int main(int argc, char *argv[])
 		rc = modbus_read_input_registers(ctx, 0,
 										 9,
 										 tab_rp_registers);
-		if (rc != 7) {
+		if (rc != 9) {
 			printf("FAILED (nb points %d)\n", rc);
 			break;
 		}

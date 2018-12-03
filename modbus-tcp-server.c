@@ -62,6 +62,44 @@ typedef struct {
 	int header_length;
 } SA;
 
+#define NO_ASIC_ID		99
+#define NO_HOT_TEMPER	0
+char stats_str[2048];
+char stats_str_line[256];
+char *stats_str_ptr;
+
+static int get_dval(char *instr, char *field, char *token, int *ret)
+{
+	char *tok;
+	strncpy(stats_str_line, instr, 256);
+	for(tok = strtok(stats_str_line, token); tok; tok=strtok(NULL, token)) {
+		if(strncmp(tok, field, strlen(field))==0) break;
+	}
+
+	if(tok == NULL) return -1;
+	tok += strlen(field)+1;
+	*ret = strtol(tok, NULL, 0);
+	printf("%s: %s=%s => %d\n", __func__, field, tok, *ret);
+
+	return 0;
+}
+
+static int get_fval(char *instr, char *field, char *token, float *ret)
+{
+	char *tok;
+	strncpy(stats_str_line, instr, 256);
+	for(tok = strtok(stats_str_line, token); tok; tok=strtok(NULL, token)) {
+		if(strncmp(tok, field, strlen(field))==0) break;
+	}
+
+	if(tok == NULL) return -1;
+	tok += strlen(field)+1;
+	*ret = strtof(tok, NULL);
+	printf("%s: %s=%s => %f\n", __func__, field, tok, *ret);
+
+	return 0;
+}
+
 void *serveClient(void *threadarg)
 {
 	int i, rc;
@@ -74,19 +112,19 @@ void *serveClient(void *threadarg)
 
 	uint8_t query[MODBUS_TCP_MAX_ADU_LENGTH];
 	int ctrl_bd_id = 1;
-	int hotest_asic_id1 = 31;
-	int hotest_temper1 = 97;
+	int hotest_asic_id1 = NO_ASIC_ID;
+	float hotest_temper1 = NO_HOT_TEMPER;
 	int error_id1 = 0;
-	int hotest_asic_id2 = 17;
-	int hotest_temper2 = 63;
+	int hotest_asic_id2 = NO_ASIC_ID;
+	float hotest_temper2 = NO_HOT_TEMPER;
 	int error_id2 = 0;
 #define BD_ENABLED 1
+#define BD_DISABLED 0
 	int stat_bd1 = BD_ENABLED;
 	int stat_bd2 = BD_ENABLED;
 
 	/* TODO: get ctrl_bd_id */
 	/* TODO: get stat_bd1, stat_bd2 */
-
 	printf("header_length = %d\n", header_length);
 	for (;;) {
 		rc = modbus_receive(ctx, query);
@@ -105,6 +143,70 @@ void *serveClient(void *threadarg)
 		int starting_addr = 0;
 		int number = 0;
 		int idx = 0;
+
+		FILE *stats_fp;
+		stats_fp = popen("/usr/bin/cgminer-api -o stats", "r");
+
+		stat_bd1 = BD_DISABLED;
+		stat_bd2 = BD_DISABLED;
+		hotest_asic_id1 = NO_ASIC_ID;
+		hotest_temper1 = NO_HOT_TEMPER;
+		error_id1 = 0;
+		hotest_asic_id2 = NO_ASIC_ID;
+		hotest_temper2 = NO_HOT_TEMPER;
+		error_id2 = 0;
+
+		if(stats_fp) {
+			char *tok, *substr, *substr2;
+			fgets(stats_str, 2048, stats_fp);
+			pclose(stats_fp);
+
+			for(tok = strtok(stats_str, "|"); tok; tok=strtok(NULL, "|")) {
+				substr = strstr(tok,"TSB11010");
+				if(substr) {
+					int cid;
+					printf("string : %s\n", tok);
+					if(get_dval(tok, "chain_id", ",", &cid) == 0) {
+						// Hash Board 1
+						if(cid == 0) {
+							if(
+									(get_fval(tok, "hi_temp", ",", &hotest_temper1) != 0) ||
+									(get_dval(tok, "hot_chip", ",", &hotest_asic_id1) != 0)
+									)
+							{
+								hotest_asic_id1 = NO_ASIC_ID;
+								hotest_temper1 = NO_HOT_TEMPER;
+								error_id1 |= 0x40;
+							}
+							else {
+								hotest_temper1 *= 10;
+								stat_bd1 = BD_ENABLED;
+							}
+						}
+						// Hash Board 2
+						else if(cid == 1) {
+							if(
+									(get_fval(tok, "hi_temp", ",", &hotest_temper2) != 0) ||
+									(get_dval(tok, "hot_chip", ",", &hotest_asic_id2) != 0)
+									)
+							{
+								hotest_asic_id2 = NO_ASIC_ID;
+								hotest_temper2 = NO_HOT_TEMPER;
+								error_id2 |= 0x40;
+							}
+							else {
+								hotest_temper2 *= 10;
+								stat_bd2 = BD_ENABLED;
+							}
+						}
+					}
+					else {
+						error_id1 |= 0x80;
+						error_id2 |= 0x80;
+					}
+				}
+			}
+		}
 
 		starting_addr = MODBUS_GET_INT16_FROM_INT8(query, header_length + 1);
 		number = MODBUS_GET_INT16_FROM_INT8(query, header_length + 3);
@@ -129,21 +231,19 @@ void *serveClient(void *threadarg)
 			// board number
 			mb_mapping->tab_input_registers[idx++] = (ctrl_bd_id<<1) - 1;
 			if(stat_bd1 == BD_ENABLED) {
-				/* TODO: get hotest_asic_id1 */
-				/* TODO: get hotest_temper1 */
 				// hotest asic id
 				mb_mapping->tab_input_registers[idx++] = hotest_asic_id1;
 				// hotest temper
-				mb_mapping->tab_input_registers[idx++] = hotest_temper1;
+				mb_mapping->tab_input_registers[idx++] = (int)hotest_temper1;
 				// error state
 				mb_mapping->tab_input_registers[idx++] = error_id1;
 				printf("bd1 info : O ,");
 			}
 			else {
 				// asic id
-				mb_mapping->tab_input_registers[idx++] = hotest_asic_id1;
+				mb_mapping->tab_input_registers[idx++] = NO_ASIC_ID;
 				// hotest temper
-				mb_mapping->tab_input_registers[idx++] = hotest_temper1;
+				mb_mapping->tab_input_registers[idx++] = NO_HOT_TEMPER;
 				// error state
 				mb_mapping->tab_input_registers[idx++] = error_id1;
 				printf("bd1 info : X ,");
@@ -156,21 +256,19 @@ void *serveClient(void *threadarg)
 			// board number
 			mb_mapping->tab_input_registers[idx++] = (ctrl_bd_id<<1);
 			if(stat_bd2 == BD_ENABLED) {
-				/* TODO: get hotest_asic_id2 */
-				/* TODO: get hotest_temper2 */
 				// hotest asic id
 				mb_mapping->tab_input_registers[idx++] = hotest_asic_id2;
 				// hotest temper
-				mb_mapping->tab_input_registers[idx++] = hotest_temper2;
+				mb_mapping->tab_input_registers[idx++] = (int)hotest_temper2;
 				// error state
 				mb_mapping->tab_input_registers[idx++] = error_id2;
 				printf("bd2 info : O ,");
 			}
 			else {
 				// asic id
-				mb_mapping->tab_input_registers[idx++] = hotest_asic_id2;
+				mb_mapping->tab_input_registers[idx++] = NO_ASIC_ID;
 				// hotest temper
-				mb_mapping->tab_input_registers[idx++] = hotest_temper2;
+				mb_mapping->tab_input_registers[idx++] = NO_HOT_TEMPER;
 				// error state
 				mb_mapping->tab_input_registers[idx++] = error_id2;
 				printf("bd2 info : X ,");
