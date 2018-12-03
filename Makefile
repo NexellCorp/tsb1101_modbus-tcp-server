@@ -1,4 +1,4 @@
-CFLAGS = -Wall `pkg-config --cflags libmodbus`
+CFLAGS = -Wall `pkg-config --cflags libmodbus` -I.
 INCLUDES := -I../../sysroot/include
 LDFLAGS := -L../../sysroot/lib
 LIBS += -lpthread `pkg-config --libs libmodbus`
@@ -34,7 +34,7 @@ all: $(TARGET)
 clean:
 	rm -f *.o
 	rm -f $(TARGET)
-	rm -f modbus-tcp-client
+	rm -f modbus-tcp-client buildtime.h
 
 client: buildtime.h
 	mv -f modbus-tcp-client.c.pc modbus-tcp-client.c
