@@ -171,7 +171,8 @@ void *serveClient(void *threadarg)
 						if(cid == 0) {
 							if(
 									(get_fval(tok, "hi_temp", ",", &hotest_temper1) != 0) ||
-									(get_dval(tok, "hot_chip", ",", &hotest_asic_id1) != 0)
+									(get_dval(tok, "hot_chip", ",", &hotest_asic_id1) != 0) ||
+									(get_dval(tok, "status", ",", &error_id1) != 0)
 									)
 							{
 								hotest_asic_id1 = NO_ASIC_ID;
@@ -187,7 +188,8 @@ void *serveClient(void *threadarg)
 						else if(cid == 1) {
 							if(
 									(get_fval(tok, "hi_temp", ",", &hotest_temper2) != 0) ||
-									(get_dval(tok, "hot_chip", ",", &hotest_asic_id2) != 0)
+									(get_dval(tok, "hot_chip", ",", &hotest_asic_id2) != 0) ||
+									(get_dval(tok, "status", ",", &error_id2) != 0)
 									)
 							{
 								hotest_asic_id2 = NO_ASIC_ID;
